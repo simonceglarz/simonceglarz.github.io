@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>STM32 Flight Controller · Simon Ceglarz</title>
+<meta name="description" content="Interrupt-driven FreeRTOS flight-controller firmware on an STM32F446, with logic-analyzer timing, a Python simulator and a hardware-in-the-loop rig.">
+<meta name="theme-color" content="#00301f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&display=swap">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site-head">
+    <a class="name" href="../">Simon Ceglarz</a>
+    <nav aria-label="Main">
+      <a href="../#projects">Projects</a>
+      <a href="../#about">About</a>
+      <a href="../resume.pdf">Résumé</a>
+      <a href="https://github.com/simonceglarz/stm32-flight-controller">Repository</a>
+    </nav>
+  </header>
+
+  <div class="page-head">
+    <a class="back" href="../#projects">All projects</a>
+    <h1>STM32 flight controller</h1>
+    <p class="lede">Quadrotor flight-controller firmware on an STM32F446 (Cortex-M4F, 180 MHz) under FreeRTOS, reading an LSM6DSOX IMU over SPI. I wrote the requirements before measuring anything, and every timing number on this page comes from a logic-analyzer capture.</p>
+    <p class="status">Status, October 2026: the firmware, the PC simulation and the hardware-in-the-loop rig all work on the bench. There are no motors yet, and it has not flown.</p>
+  </div>
+
+  <main class="article">
+    <figure class="fig">
+      <video src="../images/fc-attitude.mp4" controls muted loop playsinline preload="metadata" onerror="this.closest('figure').remove()"></video>
+      <figcaption>Live attitude estimate streaming to the laptop while I tilt the board.</figcaption>
+    </figure>
+
+    <h2>Measured on the bench</h2>
+    <dl class="specs">
+      <dt>Control loop rate</dt><dd>1.608 kHz<small>period 622.04 µs, no dropped cycles</small></dd>
+      <dt>Data-ready to task</dt><dd>8.3–9.3 µs<small>about 1 µs jitter; REQ-01 allows ≤ 50 µs</small></dd>
+      <dt>Loop execution</dt><dd>≈ 44 µs<small>SPI read, conversion and filter; about 7% of each cycle</small></dd>
+      <dt>Static angle noise</dt><dd>0.127° → 0.015° RMS<small>accelerometer alone vs. complementary filter, 8.3× lower</small></dd>
+      <dt>HIL round trip</dt><dd>3.99 ms mean, 5.03 ms max<small>0 CRC errors over 2,412 steps</small></dd>
+      <dt>Host unit tests</dt><dd>43</dd>
+    </dl>
+
+    <h2>Hardware and tools</h2>
+    <div class="table-scroll">
+      <table class="parts">
+        <tbody>
+          <tr><th scope="row">Board</th><td>NUCLEO-F446RE (STM32F446RE, Arm Cortex-M4F, 180 MHz)</td></tr>
+          <tr><th scope="row">Sensor</th><td>LSM6DSOX 6-axis IMU on an Adafruit breakout</td></tr>
+          <tr><th scope="row">RTOS</th><td>FreeRTOS through CMSIS-RTOS v2: tasks, thread flags, message queues</td></tr>
+          <tr><th scope="row">Peripherals</th><td>SPI2 at 5.625 MHz (mode 3), EXTI data-ready interrupt, USART2 at 115200, GPIO; I²C1 for the first bring-up</td></tr>
+          <tr><th scope="row">Toolchain</th><td>STM32CubeMX, STM32CubeIDE (GCC Arm), ST-LINK SWD debugging, Fedora Linux</td></tr>
+          <tr><th scope="row">Measurement</th><td>24 MHz logic analyzer with PulseView (Timing and Jitter decoders); Python with pyserial and matplotlib</td></tr>
+          <tr><th scope="row">Testing</th><td>Host unit tests (gcc, make, <code>-Werror</code>); Python simulator calling the firmware’s C code through ctypes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure class="fig">
+      <img src="../images/fc-bench.jpg" alt="The Nucleo board wired to the IMU breakout and the logic analyzer on the bench" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>The bench setup: Nucleo board, IMU breakout and logic analyzer.</figcaption>
+    </figure>
+
+    <h2>Requirements first</h2>
+    <p>Before taking a single measurement I wrote six requirements (REQ-01 to REQ-06) in <code>docs/requirements.md</code>. REQ-01 originally asked for a 1 kHz loop. The IMU only offers 833 Hz or 1.66 kHz output rates, so I revised it to 1.66 kHz in its own documented commit rather than quietly changing the target. REQ-01 is now marked met, with the capture that proves it.</p>
+
+    <h2>Timing, measured</h2>
+    <p>The control task wakes on the IMU’s data-ready interrupt, so the loop runs at the sensor’s rate instead of a timer that could drift against it. A GPIO goes high at the start of each iteration and low at the end. On the logic analyzer that pin gives the loop period and execution time directly, and its offset from the interrupt line gives the latency.</p>
+    <figure class="fig">
+      <img src="../images/fc-loop-timing.png" alt="PulseView capture of the interrupt line and the loop-timing pin" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>PulseView capture: the IMU interrupt (top) and the loop-timing pin (bottom).</figcaption>
+    </figure>
+    <h3>The sensor runs 3.5% slow, on purpose</h3>
+    <p>The loop measured 1.608 kHz, not the 1.666 kHz the datasheet lists. The LSM6DSOX has a factory trim register, <code>INTERNAL_FREQ_FINE</code>, that records each chip’s actual oscillator offset. This one reads −24, which works out to −3.60%. My measurement was −3.48%, within one register step (0.15%). The filter now reads that register at boot and computes its time step from it, instead of assuming the nominal rate.</p>
+
+    <h2>Debugging: a 3.5 ms logging stall</h2>
+    <p>The capture showed gaps in the loop pin, about five missing samples, repeating every ~105 ms. That interval matched the telemetry rate, not anything in the control path. The logging task runs at low priority, but it held a C-library lock for the 3.5 ms a UART line took to send, and the high-priority control task blocked on that same lock. Moving the formatting and transmission outside the lock removed the gaps. Task priority only protects you while the scheduler is free to switch tasks.</p>
+    <div class="fig-pair">
+      <figure class="fig">
+        <img src="../images/fc-stall-before.png" alt="Logic analyzer capture showing a gap in the loop pin" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>Before: a gap every telemetry line.</figcaption>
+      </figure>
+      <figure class="fig">
+        <img src="../images/fc-stall-after.png" alt="Logic analyzer capture with an unbroken loop pin" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>After: no dropped cycles.</figcaption>
+      </figure>
+    </div>
+
+    <h2>Debugging: a 1.7° offset at rest</h2>
+    <p>With the board flat, the filtered angle sat 1.7° away from the accelerometer’s. Before reading any code, I estimated what gyro bias would cause it: about 3.6 °/s times the filter’s 0.47 s time constant, which matched within 0.1°. The calibration printout then showed −2.8 to −3.1 °/s against a true bias of +0.54 °/s. Calibration was running while the sensor was still settling after power-on. A settle delay, discarded first samples and a spread printout fixed it.</p>
+
+    <h2>One control library, three places it runs</h2>
+    <p>The PID controller (anti-windup, derivative on measurement, low-pass filtered D term), the complementary filter and the IMU unit conversion live in one C source tree that compiles for both the STM32 and the PC. That lets the same code run in three places:</p>
+    <ul>
+      <li><strong>Host unit tests.</strong> 43 tests through <code>make test</code> with <code>-Werror</code>: PID 7, complementary filter 8, IMU conversion 11, cascade 5, protocol 12.</li>
+      <li><strong>Software-in-the-loop.</strong> A Python roll-axis simulator calls the firmware’s own <code>pid.c</code> through ctypes, using the measured loop rate and sensor noise. In simulation, a 10° step settles to ±1° in 245 ms with 0% overshoot. Under a constant 20% torque disturbance the angle stays 4° off without an integrator and recovers within about 0.3 s with one. The plant’s inertia, motor lag and thrust are estimates, so these are results against a model, not a drone.</li>
+      <li><strong>Hardware-in-the-loop.</strong> The STM32 runs the cascaded controller while the Python plant sends it simulated sensor values over UART, in lock-step. I wrote a binary protocol (sync bytes, sequence number, CRC-16/CCITT-FALSE) once in C and once in Python and checked they produce identical bytes. Over 2,412 steps the board’s outputs matched the simulation bit for bit.</li>
+    </ul>
+    <figure class="fig">
+      <img src="../images/fc-step-response.png" alt="Plot of the simulated 10 degree step response" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>Simulated 10° step response, board output and PC simulation overlaid.</figcaption>
+    </figure>
+
+    <h2>Not done yet</h2>
+    <ul>
+      <li>No motors or ESCs, and no flight.</li>
+      <li>Watchdog and failsafe behavior (REQ-02 to REQ-05), including the HIL fault test.</li>
+      <li>Control is single-axis (roll) in simulation; there is no 3-axis attitude estimate yet.</li>
+      <li>The barometer and magnetometer are bought but not integrated.</li>
+      <li>No custom PCB for this project yet.</li>
+    </ul>
+
+    <p><a href="https://github.com/simonceglarz/stm32-flight-controller">Source, requirements and captures on GitHub</a></p>
+  </main>
+
+  <footer class="site-foot">Updated October 2026.</footer>
+</div>
+</body>
+</html>

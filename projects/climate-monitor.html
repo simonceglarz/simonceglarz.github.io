@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Battery Climate Monitor · Simon Ceglarz</title>
+<meta name="description" content="Battery-powered ESP32 climate node with a datasheet-written BME280 driver, deep sleep and a measured sleep current.">
+<meta name="theme-color" content="#00301f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&display=swap">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site-head">
+    <a class="name" href="../">Simon Ceglarz</a>
+    <nav aria-label="Main">
+      <a href="../#projects">Projects</a>
+      <a href="../#about">About</a>
+      <a href="../resume.pdf">Résumé</a>
+      <a href="https://github.com/simonceglarz/esp32-plant-monitor">Repository</a>
+    </nav>
+  </header>
+
+  <div class="page-head">
+    <a class="back" href="../#projects">All projects</a>
+    <h1>Battery climate monitor</h1>
+    <p class="lede">A battery-powered ESP32 node that measures temperature, humidity and pressure for indoor plants, sleeps between readings, and reports to a cloud dashboard over WiFi. It started on a breadboard and ended on permanent perfboard.</p>
+  </div>
+
+  <main class="article">
+    <figure class="fig">
+      <img src="../images/climate-node.jpg" alt="The climate monitor on perfboard with its battery" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>The finished node on perfboard.</figcaption>
+    </figure>
+
+    <h2>Results</h2>
+    <dl class="specs">
+      <dt>Sleep current</dt><dd>6.64 → 4.34 mA<small>about 35% lower after removing the board’s power LED</small></dd>
+      <dt>Continuous run</dt><dd>36+ hours<small>logged telemetry</small></dd>
+      <dt>Cold-soak test</dt><dd>2.2 °C</dd>
+      <dt>Sensor driver</dt><dd>Written from the datasheet<small>no library</small></dd>
+    </dl>
+
+    <h2>Hardware</h2>
+    <div class="table-scroll">
+      <table class="parts">
+        <tbody>
+          <tr><th scope="row">Controller</th><td>ESP32 DevKit V1 (38-pin)</td></tr>
+          <tr><th scope="row">Sensor</th><td>Bosch BME280 over I²C</td></tr>
+          <tr><th scope="row">Battery</th><td>1S LiPo, TP4056 charger with DW01A protection</td></tr>
+          <tr><th scope="row">Regulation</th><td>MCP1700 3.3 V LDO (about 1.6 µA quiescent), 100 µF bulk capacitor for WiFi transmit spikes</td></tr>
+          <tr><th scope="row">Battery sensing</th><td>2 × 100 kΩ divider into ADC1</td></tr>
+          <tr><th scope="row">Telemetry</th><td>WiFi to an Adafruit IO dashboard</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Where the sleep current went</h2>
+    <p>The ESP32 itself draws microamps in deep sleep, so I expected a tiny number. I measured 7.3 mV across a 1.1 Ω shunt: 6.64 mA. The difference was the dev board, not the chip. Its USB-to-serial bridge, its own voltage regulator and an always-on power LED all stay powered while the ESP32 sleeps. Removing the LED brought the floor to 4.34 mA. Getting to microamps means leaving the dev board behind for a bare module or a low-power board, which is the next version.</p>
+
+    <h2>A BME280 driver from the datasheet</h2>
+    <p>Instead of a library, I wrote the driver from Bosch’s datasheet. The BME280 reports raw readings that only become temperature, humidity and pressure after you apply compensation equations using calibration constants burned into each chip at the factory. The driver reads those registers at startup and applies the equations. It also puts the sensor into sleep mode by writing its control register directly.</p>
+
+    <h2>Testing</h2>
+    <p>I ran the node continuously for over 36 hours with telemetry logging, then cold-soaked it at 2.2 °C to see how it handled cold battery sag, humidity near saturation, and WiFi retries from inside a shielded enclosure.</p>
+    <figure class="fig">
+      <img src="../images/climate-graph.png" alt="Graph of temperature and humidity over the continuous run" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>Temperature and humidity from the continuous run.</figcaption>
+    </figure>
+
+    <h2>What I’d do next</h2>
+    <ul>
+      <li>Move to a bare ESP32 module or a low-quiescent board to reach microamp sleep.</li>
+      <li>Design a KiCad PCB for it.</li>
+      <li>Model a vented enclosure in SolidWorks, keeping the sensor thermally isolated from the board.</li>
+    </ul>
+
+    <p><a href="https://github.com/simonceglarz/esp32-plant-monitor">Source on GitHub</a></p>
+  </main>
+
+  <footer class="site-foot">Updated October 2026.</footer>
+</div>
+</body>
+</html>

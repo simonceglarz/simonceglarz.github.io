@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Self-Balancing Robot · Simon Ceglarz</title>
+<meta name="description" content="ESP32 two-wheeled inverted pendulum with cascaded PID, a live WiFi tuning dashboard, a SolidWorks chassis and a custom KiCad PCB.">
+<meta name="theme-color" content="#00301f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400&display=swap">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site-head">
+    <a class="name" href="../">Simon Ceglarz</a>
+    <nav aria-label="Main">
+      <a href="../#projects">Projects</a>
+      <a href="../#about">About</a>
+      <a href="../resume.pdf">Résumé</a>
+      <a href="https://github.com/simonceglarz/self-balancing-rc-robot">Repository</a>
+    </nav>
+  </header>
+
+  <div class="page-head">
+    <a class="back" href="../#projects">All projects</a>
+    <h1>Self-balancing robot</h1>
+    <p class="lede">A two-wheeled inverted pendulum built around an ESP32. It balances on a cascaded PID loop, drives from a wireless joystick, and tunes live from a phone. I learned soldering, KiCad and SolidWorks on this project.</p>
+    <p class="status">Status, October 2026: version 1 has balanced and driven since September. The custom PCB that replaces the perfboard is assembled and its power rails and I²C buses check out; the motor test on the new board is next.</p>
+  </div>
+
+  <main class="article">
+    <figure class="fig">
+      <video src="../images/robot-balancing-1.mp4" controls muted loop playsinline preload="metadata" onerror="this.closest('figure').remove()"></video>
+      <figcaption>Balancing and driving on the perfboard version.</figcaption>
+    </figure>
+
+    <h2>Results</h2>
+    <dl class="specs">
+      <dt>Control loop</dt><dd>100 Hz<small>nominal; time step measured each cycle</small></dd>
+      <dt>Recovery</dt><dd>From 35°+<small>released at that tilt, recovers without help</small></dd>
+      <dt>Run time per charge</dt><dd>45+ min<small>mostly continuous balancing; motors cut on falls</small></dd>
+      <dt>Motor PWM</dt><dd>20 kHz, 8-bit<small>above the audible range</small></dd>
+      <dt>Live telemetry</dt><dd>≈ 20 Hz<small>to the tuning dashboard</small></dd>
+    </dl>
+
+    <h2>Hardware</h2>
+    <div class="table-scroll">
+      <table class="parts">
+        <tbody>
+          <tr><th scope="row">Controller</th><td>ESP32-WROOM DevKit (38-pin)</td></tr>
+          <tr><th scope="row">IMU</th><td>LSM6DSOX 6-axis over I²C, ±4 g and ±500 dps at 104 Hz</td></tr>
+          <tr><th scope="row">Motor driver</th><td>DRV8833 dual H-bridge</td></tr>
+          <tr><th scope="row">Motors</th><td>2 × JGA25-370 gearmotors with quadrature encoders, run from 2S (about 173 RPM no-load)</td></tr>
+          <tr><th scope="row">Power</th><td>2S LiPo (7.4 V, 2200 mAh) → 1N5822 Schottky reverse-polarity protection → 2 × 1000 µF bulk + 100 nF → MPM3610 5 V buck → ESP32 3.3 V rail</td></tr>
+          <tr><th scope="row">Signal conditioning</th><td>RC low-pass on all four encoder lines (100 Ω, 10 nF, f<sub>c</sub> ≈ 159 kHz)</td></tr>
+          <tr><th scope="row">Battery sensing</th><td>100 kΩ / 47 kΩ divider into ADC1, 6.6 V motor cutoff</td></tr>
+          <tr><th scope="row">Display</th><td>SSD1306 OLED showing angle, motor output and encoder counts</td></tr>
+          <tr><th scope="row">Remote</th><td>Second ESP32 as a joystick controller over ESP-NOW</td></tr>
+          <tr><th scope="row">Chassis</th><td>Three 3D-printed PETG plates on brass M3 standoffs, co-designed in SolidWorks</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>Control</h2>
+    <p>The inner loop is a PID on tilt angle. The angle comes from a complementary filter (α = 0.98: mostly integrated gyro, corrected slowly by the accelerometer), with the gyro bias calibrated at boot. The outer loop is a PI on averaged wheel velocity from the encoders, and it shifts the angle setpoint so the robot doesn’t creep across the floor while balanced.</p>
+    <ul>
+      <li>The time step is measured each iteration and clamped at 20 ms, so a stall can’t produce a huge integral or derivative kick.</li>
+      <li>The derivative acts on the measurement, not the error, so changing the setpoint doesn’t spike the output.</li>
+      <li>Drive and steering commands are slew-limited (12 °/s of tilt trim, 80 units/s of steering), which stopped the robot tipping on sudden joystick moves.</li>
+      <li>Fall detection zeroes the motors and resets the integrators; the cutoff angle is tunable live.</li>
+    </ul>
+
+    <figure class="fig">
+      <video src="../images/robot-balancing-2.mp4" controls muted loop playsinline preload="metadata" onerror="this.closest('figure').remove()"></video>
+      <figcaption>Recovering after being released at a steep angle.</figcaption>
+    </figure>
+
+    <h2>Debugging notes</h2>
+    <h3>The fix that mattered most</h3>
+    <p>DC gearmotors don’t move at all below a certain PWM duty, so the firmware adds a minimum output. My first version snapped any small command straight to that floor. Watching the output on the OLED, I saw it pinned at the floor for every error under about 3.4°, which turned the controller into bang-bang control right where it needed to be gentle. I replaced the snap with a proportional rescale per motor, so small errors still produce small differences in output. It was the biggest single improvement in stability.</p>
+    <h3>A short the multimeter didn’t beep for</h3>
+    <p>One encoder channel sat at mid-rail and its counts bounced. Continuity mode stayed silent, but measuring resistance showed 150–200 Ω to ground, above the meter’s beep threshold. On signal lines I now read the resistance instead of trusting the beeper.</p>
+    <h3>Motor pinout by measurement</h3>
+    <p>The seller’s wire colors didn’t follow the usual convention. Measuring about 8 Ω across red and white identified the winding. Going by color alone would have put battery voltage into the encoder’s Hall sensor.</p>
+    <h3>Motors that twitched on USB power</h3>
+    <p>With only USB connected, GPIO high states back-fed the DRV8833’s motor supply through its internal clamp diodes and the motors twitched. The rule now is battery on first and off last, and it is printed on the PCB’s silkscreen.</p>
+
+    <h2>Live tuning dashboard</h2>
+    <p>The ESP32 hosts a WiFi access point with a web page served over WebSocket. Sliders and nudge buttons set every gain, calibration value and the fall cutoff while the robot runs, and telemetry streams back at about 20 Hz. When a phone connects, the page loads the values the robot is actually running. This replaced a reflash for every tuning change.</p>
+    <figure class="fig">
+      <img src="../images/robot-dashboard.png" alt="Screenshot of the tuning dashboard with gain sliders" loading="lazy" onerror="this.closest('figure').remove()">
+      <figcaption>The tuning dashboard on a phone.</figcaption>
+    </figure>
+
+    <h2>Custom PCB</h2>
+    <p>Revision 1 is a 2-layer, 120 × 70 mm KiCad board that replaces the hand-wired perfboard. The ESP32 DevKit, motor driver and buck converter plug in as modules. It passed ERC and DRC with zero errors and was fabricated by JLCPCB.</p>
+    <div class="fig-pair">
+      <figure class="fig">
+        <img src="../images/pcb-layout.png" alt="KiCad layout of the robot PCB" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>Layout in KiCad.</figcaption>
+      </figure>
+      <figure class="fig">
+        <img src="../images/pcb-assembled.jpg" alt="The assembled robot PCB with modules installed" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>Assembled, modules socketed.</figcaption>
+      </figure>
+    </div>
+    <ul>
+      <li><strong>Two I²C buses.</strong> A full OLED refresh takes about 23 ms at 400 kHz (calculated), longer than two control periods. The IMU now has its own bus, so the display can’t hold it up once the display moves into its own FreeRTOS task.</li>
+      <li><strong>GPIO remap for routing.</strong> I reassigned eight pins (four motor PWM, four encoder) so both groups run from connector to ESP32 with no crossings.</li>
+      <li><strong>Traces sized for current.</strong> Using IPC-2221 for 1 oz copper and about 10 °C rise: 1.5 mm for the battery, 1.0 mm for motor outputs, 0.5 mm for 5 V, 0.25 mm for signals.</li>
+      <li><strong>Debug access.</strong> Headers break out all four motor PWM lines and all four filtered encoder lines, with test points on each rail and on the IMU bus.</li>
+      <li><strong>Expansion header.</strong> Power, the second I²C bus, UART, I²S, two servo PWM lines and an ADC input, for a future daughterboard.</li>
+    </ul>
+    <h3>Caught before ordering</h3>
+    <p>A pre-order check found four errors that would have cost a board spin. A custom DRC rule with no layer condition flooded the report with 499 silkscreen violations and hit KiCad’s per-type cap, which could have hidden real copper errors. A caliper misreading had the DevKit header rows at 23.5 mm instead of 22.86 mm. The motor driver rows were 13.35 mm instead of the 12.70 mm on Adafruit’s drawing. The XT60 footprint was the same gender as the battery’s own plug.</p>
+    <h3>Bring-up so far</h3>
+    <p>I powered the board with every module removed and added the buck, the DevKit and the driver one at a time, checking each rail before the next: 8.05 V on the battery rail after the protection diode and 3.28 V on the 3.3 V rail. A scan of both I²C buses found the IMU alone on one and the OLED alone on the other, and the firmware runs on the new pin map with the OLED tracking tilt. The motor and encoder test is next.</p>
+    <div class="fig-pair">
+      <figure class="fig">
+        <img src="../images/pcb-front.jpg" alt="Front of the bare robot PCB" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>Front.</figcaption>
+      </figure>
+      <figure class="fig">
+        <img src="../images/pcb-back.jpg" alt="Back of the robot PCB with silkscreen notes and a QR code" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>Back, with the power-sequencing rule, the repository URL and a LinkedIn QR code.</figcaption>
+      </figure>
+    </div>
+
+    <h2>Chassis</h2>
+    <p>The chassis is three PETG plates on brass standoff columns, co-designed in SolidWorks. The motors hang below the bottom plate to raise the center of mass, which makes the pendulum slower and easier to balance.</p>
+    <div class="fig-pair">
+      <figure class="fig">
+        <img src="../images/robot-cad.png" alt="SolidWorks model of the robot chassis" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>SolidWorks model.</figcaption>
+      </figure>
+      <figure class="fig">
+        <img src="../images/robot-early.jpg" alt="An early build of the robot on the bench" loading="lazy" onerror="this.closest('figure').remove()">
+        <figcaption>An early build on the bench.</figcaption>
+      </figure>
+    </div>
+
+    <h2>Known limits and what’s next</h2>
+    <ul>
+      <li>The OLED refresh runs in the same loop as the controller, so 100 Hz isn’t guaranteed. Next: measure the loop on a logic analyzer, then split the firmware into FreeRTOS tasks.</li>
+      <li>Encoders are decoded on one channel’s edges only (2×), which can miss counts at speed. Next: the ESP32’s PCNT hardware counter for full 4× decoding.</li>
+      <li>Tuning values live in RAM and reset on power-off.</li>
+      <li>Version 2: an enclosure-style chassis around the PCB, stronger battery mounting, bumpers, and time-of-flight sensors for obstacle detection.</li>
+    </ul>
+
+    <p><a href="https://github.com/simonceglarz/self-balancing-rc-robot">Firmware, controller and PCB files on GitHub</a></p>
+  </main>
+
+  <footer class="site-foot">Updated October 2026.</footer>
+</div>
+</body>
+</html>
